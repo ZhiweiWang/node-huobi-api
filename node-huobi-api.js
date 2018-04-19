@@ -237,7 +237,7 @@ module.exports = (function() {
     return {
         candlesticks: function(symbol, type, callback, options = { size: 500 }) {
             if (!callback) return;
-            let params = Object.assign({ symbol, period: type }, options);
+            let params = Object.assign({ symbol, period: type, size: 500 }, options);
             params.size = Math.max(Math.min(params.size, 2000), 1);
 
             publicRequest("/market/history/kline", params, callback);
