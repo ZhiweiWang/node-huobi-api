@@ -48,7 +48,6 @@ module.exports = (function() {
             url: url,
             method: method,
             timeout: options.timeout,
-            agent: false,
             headers: {
                 "User-Agent": userAgent,
                 "Content-type": contentType
@@ -92,7 +91,6 @@ module.exports = (function() {
             url: url + "?" + query + "&Signature=" + encodeURIComponent(signature),
             method: method,
             timeout: options.timeout,
-            agent: false,
             headers: {
                 "User-Agent": userAgent,
                 "Content-type": contentType
@@ -235,30 +233,171 @@ module.exports = (function() {
     };
     ////////////////////////////
     return {
-        candlesticks: function(symbol, type, callback, options = { size: 500 }) {
-            if (!callback) return;
-            let params = Object.assign({ symbol, period: type, size: 500 }, options);
+        candlesticks: function(symbol, type, callback, options = {}) {
+            let params = Object.assign({ symbol, period: type, size: 150 }, options);
             params.size = Math.max(Math.min(params.size, 2000), 1);
 
             publicRequest("/market/history/kline", params, callback);
         },
-        accounts: function(callback) {
-            signedRequest("/v1/account/accounts", false, function(error, data) {
-                if (callback) callback(error, data);
-            });
+        ticker: function(symbol, callback) {
+            let params = { symbol };
+
+            publicRequest("/market/detail/merged", params, callback);
         },
-        balance: function(account, callback) {
-            signedRequest(`/v1/${options.hadax ? "hadax/" : ""}account/accounts/${account}/balance`, false, function(
-                error,
-                data
-            ) {
-                if (callback) callback(error, data);
-            });
+        ticker_detail: function(symbol, callback) {
+            let params = { symbol };
+
+            publicRequest("/market/detail", params, callback);
+        },
+        depth: function(symbol, callback, type = "step0") {
+            let params = { symbol, type };
+
+            publicRequest("/market/depth", params, callback);
+        },
+        trade_detail: function(symbol, callback) {
+            let params = { symbol };
+
+            publicRequest("/market/trade", params, callback);
+        },
+        trade_history: function(symbol, callback, size = 1) {
+            let params = { symbol, size };
+            params.size = Math.max(Math.min(params.size, 2000), 1);
+
+            publicRequest("/market/history/trade", params, callback);
+        },
+        accounts: function(callback) {
+            signedRequest("/v1/account/accounts", false, callback);
+        },
+        balance: function(account_id, callback) {
+            signedRequest(`/v1/account/accounts/${account_id}/balance`, false, callback);
+        },
+        symbols: function(callback) {
+            publicRequest(`/v1/${options.hadax ? "hadax/" : ""}common/symbols`, false, callback);
         },
         currencys: function(callback) {
-            signedRequest(`/v1/${options.hadax ? "hadax/" : ""}common/currencys`, false, function(error, data) {
-                if (callback) callback(error, data);
-            });
+            signedRequest(`/v1/${options.hadax ? "hadax/" : ""}common/currencys`, false, callback);
+        },
+        timestamp: function(callback) {
+            signedRequest("/v1/common/timestamp", false, callback);
+        },
+        place_order: function(account_id, symbol, type, amount, callback, price = false, source = false) {
+            let params = { "account-id": account_id, amount, symbol, type };
+            if (price) params.price = price;
+            if (source) params.source = source;
+
+            signedRequest("/v1/order/orders/place", params, callback, "POST");
+        },
+        cancel_order: function(order_id, callback) {
+            if (Array.isArray(order_id)) {
+                if (order_id.length > 50) console.warn("only cancel first 50 orders");
+                signedRequest("/v1/order/orders/batchcancel", { "order-ids": order_id.slice(0, 50) }, callback, "POST");
+            } else signedRequest(`/v1/order/orders/${order_id}/submitcancel`, false, callback, "POST");
+        },
+        get_order: function(order_id, callback) {
+            signedRequest(`/v1/order/orders/${order_id}`, false, callback);
+        },
+        get_matchresults: function(order_id, callback) {
+            signedRequest(`/v1/order/orders/${order_id}/matchresults`, false, callback);
+        },
+        orders: function(
+            symbol,
+            status,
+            callback,
+            types = false,
+            start = false,
+            end = false,
+            from = false,
+            direct = false,
+            size = false
+        ) {
+            let params = { symbol, states: status };
+            if (types) params.types = types;
+            if (start) params["start-date"] = start;
+            if (end) params["end-date"] = end;
+            if (from) params.from = from;
+            if (direct) params.direct = direct;
+            if (size) params.size = size;
+
+            signedRequest("/v1/order/orders", params, callback);
+        },
+        matchresults: function(
+            symbol,
+            callback,
+            types = false,
+            start = false,
+            end = false,
+            from = false,
+            direct = false,
+            size = false
+        ) {
+            let params = { symbol };
+            if (types) params.types = types;
+            if (start) params["start-date"] = start;
+            if (end) params["end-date"] = end;
+            if (from) params.from = from;
+            if (direct) params.direct = direct;
+            if (size) params.size = size;
+
+            signedRequest("/v1/order/matchresults", false, callback);
+        },
+        transfer_margin: function(symbol, type, currency, amount, callback) {
+            if (type !== "in" && type !== "out") throw Error('margin transfer type should be "in" or "out"');
+            let params = { symbol, currency, amount };
+
+            signedRequest(`/v1/dw/transfer-${type}/margin`, params, callback, "POST");
+        },
+        new_margin: function(symbol, currency, amount, callback) {
+            let params = { symbol, currency, amount };
+
+            signedRequest("/v1/margin/orders", params, callback, "POST");
+        },
+        repay_margin: function(order_id, amount, callback) {
+            let params = { amount };
+
+            signedRequest(`/v1/margin/orders/${order_id}/repay`, params, callback, "POST");
+        },
+        loan_orders: function(
+            symbol,
+            callback,
+            status = false,
+            start = false,
+            end = false,
+            from = false,
+            direct = false,
+            size = false
+        ) {
+            let params = { symbol };
+            if (status) params.states = status;
+            if (start) params["start-date"] = start;
+            if (end) params["end-date"] = end;
+            if (from) params.from = from;
+            if (direct) params.direct = direct;
+            if (size) params.size = size;
+
+            signedRequest("/v1/margin/loan-orders", params, callback);
+        },
+        margin_balance: function(callback, symbol = false) {
+            let params = {};
+            if (symbol) params.symbol = symbol;
+
+            signedRequest("/v1/margin/accounts/balance", params, callback);
+        },
+        withdraw: function(address, amount, currency, callback, fee = false, tag = false) {
+            let params = { address, amount, currency };
+            if (fee) params.fee = fee;
+            if (tag) params["addr-tag"] = tag;
+
+            signedRequest("/v1/dw/withdraw/api/create", params, callback, "POST");
+        },
+        cancel_withdraw: function(withdraw_id, callback) {
+            signedRequest(`/v1/dw/withdraw-virtual/${withdraw_id}/cancel`, false, callback, "POST");
+        },
+        deposit_withdraw: function(currency, type, callback, from = false, size = false) {
+            let params = { currency, type };
+            if (from) params.from = from;
+            if (size) params.size = size;
+
+            signedRequest("/v1/query/deposit-withdraw", params, callback);
         },
         setOption: function(key, value) {
             options[key] = value;
@@ -279,17 +418,13 @@ module.exports = (function() {
             subscriptions: function() {
                 return subscriptions;
             },
-            candlesticks: function candlesticks(symbols, interval, callback) {
+            candlesticks: function(symbols, interval, callback) {
                 let reconnect = function() {
                     if (options.reconnect) candlesticks(symbols, interval, callback);
                 };
-                // If an array of symbols are sent we use a combined stream connection rather.
-                // This is transparent to the developer, and results in a single socket connection.
-                // This essentially eliminates "unexpected response" errors when subscribing to a lot of data.
                 let subscription = undefined;
                 if (Array.isArray(symbols)) {
-                    if (!isArrayUnique(symbols))
-                        throw Error('candlesticks: "symbols" cannot contain duplicate elements.');
+                    if (!isArrayUnique(symbols)) throw Error('"symbols" cannot contain duplicate elements.');
                     let streams = symbols.map(function(symbol) {
                         return `market.${symbol}.kline.${interval}`;
                     });
@@ -297,6 +432,24 @@ module.exports = (function() {
                 } else {
                     let symbol = symbols.toLowerCase();
                     subscription = subscribe(`market.${symbol}.kline.${interval}`, callback, reconnect, addChannel);
+                }
+                return subscription.endpoint;
+            },
+            depth: function(symbols, callback, type = "step0") {
+                let reconnect = function() {
+                    if (options.reconnect) depth(symbols, callback, type);
+                };
+                let subscription = undefined;
+                if (Array.isArray(symbols)) {
+                    if (!isArrayUnique(symbols))
+                        throw Error('candlesticks: "symbols" cannot contain duplicate elements.');
+                    let streams = symbols.map(function(symbol) {
+                        return `market.${symbol}.depth.${type}`;
+                    });
+                    subscription = subscribeCombined(streams, callback, reconnect, addChannel);
+                } else {
+                    let symbol = symbols.toLowerCase();
+                    subscription = subscribe(`market.${symbol}.depth.${type}`, callback, reconnect, addChannel);
                 }
                 return subscription.endpoint;
             }
