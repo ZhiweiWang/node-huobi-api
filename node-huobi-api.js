@@ -10,6 +10,7 @@ module.exports = (function() {
     "use strict";
     const WebSocket = require("ws");
     const request = require("request");
+    const crypto = require("crypto");
     const file = require("fs");
     const stringHash = require("string-hash");
     const _ = require("underscore");
@@ -23,7 +24,7 @@ module.exports = (function() {
     const contentType = "application/x-www-form-urlencoded";
     let subscriptions = {};
     const default_options = {
-        server: "api.huobipro.com",
+        hadax: false,
         timeout: 30000,
         reconnect: true,
         verbose: false,
@@ -36,151 +37,79 @@ module.exports = (function() {
     let socketHeartbeatInterval;
     let channel_idx = 0;
 
-    const publicRequest = function(method, params, callback) {
-        let functionName = "publicRequest()";
+    const getServer = function() {
+        return options.hadax ? "api.hadax.com" : "api.huobipro.com";
+    };
 
-        if (!_.isObject(params)) {
-            let error = new VError(
-                "%s second parameter %s must be an object. If no params then pass an empty object {}",
-                functionName,
-                params
-            );
-            return callback(error);
-        }
-
-        if (!callback || typeof callback != "function") {
-            let error = new VError(
-                "%s third parameter needs to be a callback function with err and data parameters",
-                functionName
-            );
-            return callback(error);
-        }
-
-        let url = `${base}${options.server}/${method}`;
-
-        let req_options = {
+    const publicRequest = function(endpoint, params, callback, method = "GET") {
+        if (!params) params = {};
+        let url = `${base}${getServer()}${endpoint}`;
+        let opt = {
             url: url,
-            method: "GET",
+            method: method,
+            timeout: options.timeout,
+            agent: false,
             headers: {
                 "User-Agent": userAgent,
                 "Content-type": contentType
             },
-            timeout: options.timeout,
             qs: params,
-            json: {} // request will parse the json response into an object
+            json: {}
         };
+        request(opt, function(error, response, body) {
+            if (!callback) return;
 
-        let requestDesc = util.format(
-            "%s request to url %s with parameters %s",
-            req_options.method,
-            req_options.url,
-            JSON.stringify(params)
-        );
+            if (error) return callback(error, {});
 
-        executeRequest(req_options, requestDesc, callback);
-    };
+            if (response && response.statusCode !== 200) return callback(response, {});
 
-    const executeRequest = function(req_options, requestDesc, callback) {
-        let functionName = "executeRequest()";
-
-        request(req_options, function(err, response, data) {
-            let error = null, // default to no errors
-                returnObject = data;
-
-            if (err) {
-                error = new VError(err, "%s failed %s", functionName, requestDesc);
-                error.name = err.code;
-            } else if (response.statusCode < 200 || response.statusCode >= 300) {
-                error = new VError(
-                    "%s HTTP status code %s returned from %s",
-                    functionName,
-                    response.statusCode,
-                    requestDesc
-                );
-                error.name = response.statusCode;
-            } else if (req_options.form) {
-                try {
-                    returnObject = JSON.parse(data);
-                } catch (e) {
-                    error = new VError(e, "Could not parse response from server: " + data);
-                }
-            } else if (req_options.json && !_.isObject(data)) {
-                // if json request was not able to parse json response into an object
-                error = new VError(
-                    "%s could not parse response from %s\nResponse: %s",
-                    functionName,
-                    requestDesc,
-                    data
-                );
-            }
-
-            if (_.has(returnObject, "error_code")) {
-                let errorMessage = mapErrorMessage(returnObject.error_code);
-
-                error = new VError(
-                    '%s %s returned error code %s, message: "%s"',
-                    functionName,
-                    requestDesc,
-                    returnObject.error_code,
-                    errorMessage
-                );
-
-                error.name = returnObject.error_code;
-            }
-
-            callback(error, returnObject);
+            return callback(null, body);
         });
     };
-    /**
-     * Maps the OKEX error codes to error message
-     * @param  {Integer}  error_code   OKEX error code
-     * @return {String}                error message
-     */
-    const mapErrorMessage = function(error_code) {
-        var errorCodes = {
-            10000: "Required parameter can not be null",
-            10001: "Requests are too frequent",
-            10002: "System Error",
-            10003: "Restricted list request, please try again later",
-            10004: "IP restriction",
-            10005: "Key does not exist",
-            10006: "User does not exist",
-            10007: "Signatures do not match",
-            10008: "Illegal parameter",
-            10009: "Order does not exist",
-            10010: "Insufficient balance",
-            10011: "Order is less than minimum trade amount",
-            10012: "Unsupported symbol (not btc_usd or ltc_usd)",
-            10013: "This interface only accepts https requests",
-            10014: "Order price must be between 0 and 1,000,000",
-            10015: "Order price differs from current market price too much",
-            10016: "Insufficient coins balance",
-            10017: "API authorization error",
-            10026: "Loan (including reserved loan) and margin cannot be withdrawn",
-            10027: "Cannot withdraw within 24 hrs of authentication information modification",
-            10028: "Withdrawal amount exceeds daily limit",
-            10029: "Account has unpaid loan, please cancel/pay off the loan before withdraw",
-            10031: "Deposits can only be withdrawn after 6 confirmations",
-            10032: "Please enabled phone/google authenticator",
-            10033: "Fee higher than maximum network transaction fee",
-            10034: "Fee lower than minimum network transaction fee",
-            10035: "Insufficient BTC/LTC",
-            10036: "Withdrawal amount too low",
-            10037: "Trade password not set",
-            10040: "Withdrawal cancellation fails",
-            10041: "Withdrawal address not approved",
-            10042: "Admin password error",
-            10100: "User account frozen",
-            10216: "Non-available API",
-            503: "Too many requests (Http)"
+
+    const signedRequest = function(endpoint, params, callback, method = "GET") {
+        if (!options.APIKEY) throw Error("signedRequest: Invalid API Key");
+        if (!options.APISECRET) throw Error("signedRequest: Invalid API Secret");
+        if (!params) params = {};
+        let url = `${base}${getServer()}${endpoint}`;
+        params.AccessKeyId = options.APIKEY;
+        params.SignatureMethod = "HmacSHA256";
+        params.SignatureVersion = 2;
+        params.Timestamp = new Date().toJSON().slice(0, 19);
+        let query = Object.keys(params)
+            .sort()
+            .reduce(function(a, k) {
+                a.push(k + "=" + encodeURIComponent(params[k]));
+                return a;
+            }, [])
+            .join("&");
+        let signature = crypto
+            .createHmac("sha256", options.APISECRET)
+            .update([method, getServer(), endpoint, query].join("\n"))
+            .digest()
+            .toString("base64");
+        let opt = {
+            url: url + "?" + query + "&Signature=" + encodeURIComponent(signature),
+            method: method,
+            timeout: options.timeout,
+            agent: false,
+            headers: {
+                "User-Agent": userAgent,
+                "Content-type": contentType
+            },
+            json: {}
         };
+        request(opt, function(error, response, body) {
+            if (!callback) return;
 
-        if (!errorCodes[error_code]) {
-            return "Unknown OKEX error code: " + error_code;
-        }
+            if (error) return callback(error, {});
 
-        return errorCodes[error_code];
+            if (response && response.statusCode !== 200) return callback(response, {});
+
+            return callback(null, body);
+        });
     };
+
     ////////////////////////////
     // reworked Tuitio's heartbeat code into a shared single interval tick
     const noop = function() {};
@@ -239,7 +168,7 @@ module.exports = (function() {
     };
     const subscribe = function(endpoint, callback, reconnect = false, opened_callback = false) {
         if (options.verbose) options.log("Subscribed to " + endpoint);
-        const ws = new WebSocket(`${stream}${options.server}/ws`);
+        const ws = new WebSocket(`${stream}${getServer()}/ws`);
         ws.reconnect = options.reconnect;
         ws.endpoint = endpoint;
         ws.isAlive = false;
@@ -263,7 +192,7 @@ module.exports = (function() {
     };
     const subscribeCombined = function(streams, callback, reconnect = false, opened_callback = false) {
         const queryParams = streams.join("/");
-        const ws = new WebSocket(`${stream}${options.server}/ws`);
+        const ws = new WebSocket(`${stream}${getServer()}/ws`);
         ws.reconnect = options.reconnect;
         ws.endpoint = stringHash(queryParams);
         ws.streams = streams;
@@ -311,7 +240,25 @@ module.exports = (function() {
             let params = Object.assign({ symbol, period: type }, options);
             params.size = Math.max(Math.min(params.size, 2000), 1);
 
-            publicRequest("market/history/kline", params, callback);
+            publicRequest("/market/history/kline", params, callback);
+        },
+        accounts: function(callback) {
+            signedRequest("/v1/account/accounts", false, function(error, data) {
+                if (callback) callback(error, data);
+            });
+        },
+        balance: function(account, callback) {
+            signedRequest(`/v1/${options.hadax ? "hadax/" : ""}account/accounts/${account}/balance`, false, function(
+                error,
+                data
+            ) {
+                if (callback) callback(error, data);
+            });
+        },
+        currencys: function(callback) {
+            signedRequest(`/v1/${options.hadax ? "hadax/" : ""}common/currencys`, false, function(error, data) {
+                if (callback) callback(error, data);
+            });
         },
         setOption: function(key, value) {
             options[key] = value;
@@ -319,13 +266,9 @@ module.exports = (function() {
         options: function(opt, callback = false) {
             if (typeof opt === "string") {
                 // Pass json config filename
-                options = JSON.parse(file.readFileSync(opt));
-            } else options = opt;
-            if (typeof options.reconnect === "undefined") options.reconnect = default_options.reconnect;
-            if (typeof options.test === "undefined") options.test = default_options.test;
-            if (typeof options.log === "undefined") options.log = default_options.log;
-            if (typeof options.verbose === "undefined") options.verbose = default_options.verbose;
-            if (typeof options.server === "undefined") options.server = default_options.server;
+                opt = JSON.parse(file.readFileSync(opt));
+            }
+            options = Object.assign(default_options, opt);
 
             if (callback) callback();
         },
