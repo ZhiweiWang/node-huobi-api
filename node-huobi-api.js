@@ -13,10 +13,7 @@ module.exports = (function() {
     const crypto = require("crypto");
     const file = require("fs");
     const stringHash = require("string-hash");
-    const _ = require("underscore");
-    const util = require("util");
     const pako = require("pako");
-    const VError = require("verror");
     const base = "https://";
     const stream = "wss://";
     const userAgent =
@@ -235,7 +232,7 @@ module.exports = (function() {
     return {
         candlesticks: function(symbol, type, callback, options = {}) {
             let params = Object.assign({ symbol, period: type, size: 150 }, options);
-            params.size = Math.max(Math.min(params.size, 2000), 1);
+            params.size = Math.max(Math.min(params.size, 1000), 1);
 
             publicRequest("/market/history/kline", params, callback);
         },
@@ -418,7 +415,7 @@ module.exports = (function() {
             subscriptions: function() {
                 return subscriptions;
             },
-            candlesticks: function(symbols, interval, callback) {
+            candlesticks: function candlesticks(symbols, interval, callback) {
                 let reconnect = function() {
                     if (options.reconnect) candlesticks(symbols, interval, callback);
                 };
@@ -435,7 +432,7 @@ module.exports = (function() {
                 }
                 return subscription.endpoint;
             },
-            depth: function(symbols, callback, type = "step0") {
+            depth: function depth(symbols, callback, type = "step0") {
                 let reconnect = function() {
                     if (options.reconnect) depth(symbols, callback, type);
                 };
