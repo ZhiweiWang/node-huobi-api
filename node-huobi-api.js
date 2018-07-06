@@ -13,10 +13,7 @@ module.exports = (function() {
     const crypto = require("crypto");
     const file = require("fs");
     const stringHash = require("string-hash");
-    const _ = require("underscore");
-    const util = require("util");
     const pako = require("pako");
-    const VError = require("verror");
     const base = "https://";
     const stream = "wss://";
     const userAgent =
@@ -195,13 +192,13 @@ module.exports = (function() {
         ws.send(JSON.stringify(ws.params));
     };
 
-    const subscribe = function(endpoint, callback, reconnect = false) {
+    const subscribe = function(endpoint, callback, reconnect = false, opened_callback = false) {
         if (options.verbose) options.log("Subscribed to " + endpoint);
         const ws = new WebSocket(`${stream}${getServer()}/ws`);
         ws.reconnect = options.reconnect;
         ws.endpoint = endpoint;
         ws.isAlive = false;
-        ws.on("open", _handleSocketOpen.bind(ws, addChannel));
+        ws.on("open", _handleSocketOpen.bind(ws, opened_callback));
         ws.on("pong", _handleSocketHeartbeat);
         ws.on("error", _handleSocketError);
         ws.on("close", _handleSocketClose.bind(ws, reconnect));
@@ -219,7 +216,7 @@ module.exports = (function() {
         });
         return ws;
     };
-    const subscribeCombined = function(streams, callback, reconnect = false) {
+    const subscribeCombined = function(streams, callback, reconnect = false, opened_callback = false) {
         const queryParams = streams.join("/");
         const ws = new WebSocket(`${stream}${getServer()}/ws`);
         ws.reconnect = options.reconnect;
@@ -227,7 +224,7 @@ module.exports = (function() {
         ws.streams = streams;
         ws.isAlive = false;
         if (options.verbose) options.log("CombinedStream: Subscribed to [" + ws.endpoint + "] " + queryParams);
-        ws.on("open", _handleSocketOpen.bind(ws, addChannel));
+        ws.on("open", _handleSocketOpen.bind(ws, opened_callback));
         ws.on("pong", _handleSocketHeartbeat);
         ws.on("error", _handleSocketError);
         ws.on("close", _handleSocketClose.bind(ws, reconnect));
@@ -266,7 +263,7 @@ module.exports = (function() {
     return {
         kline: function(symbol, type, callback, options = {}) {
             let params = Object.assign({ symbol, period: type, size: 150 }, options);
-            params.size = Math.max(Math.min(params.size, 2000), 1);
+            params.size = Math.max(Math.min(params.size, 1000), 1);
 
             publicRequest("/market/history/kline", params, callback);
         },
