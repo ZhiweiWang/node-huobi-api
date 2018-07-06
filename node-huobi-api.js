@@ -460,10 +460,10 @@ module.exports = (function() {
                     let streams = symbols.map(function(symbol) {
                         return `market.${symbol}.kline.${interval}`;
                     });
-                    ws = subscribeCombined(streams, callback, reconnect);
+                    ws = subscribeCombined(streams, callback, reconnect, addChannel);
                 } else {
                     let symbol = symbols.toLowerCase();
-                    ws = subscribe(`market.${symbol}.kline.${interval}`, callback, reconnect);
+                    ws = subscribe(`market.${symbol}.kline.${interval}`, callback, reconnect, addChannel);
                 }
                 return ws.endpoint;
             },
@@ -477,10 +477,10 @@ module.exports = (function() {
                     let streams = symbols.map(function(symbol) {
                         return `market.${symbol}.depth.${type}`;
                     });
-                    ws = subscribeCombined(streams, callback, reconnect);
+                    ws = subscribeCombined(streams, callback, reconnect, addChannel);
                 } else {
                     let symbol = symbols.toLowerCase();
-                    ws = subscribe(`market.${symbol}.depth.${type}`, callback, reconnect);
+                    ws = subscribe(`market.${symbol}.depth.${type}`, callback, reconnect, addChannel);
                 }
                 return ws.endpoint;
             },
@@ -488,7 +488,7 @@ module.exports = (function() {
                 let reconnect = function() {
                     if (options.reconnect) sub_trade(symbol, callback);
                 };
-                let ws = subscribe(`market.${symbol}.trade.detail`, callback, reconnect);
+                let ws = subscribe(`market.${symbol}.trade.detail`, callback, reconnect, addChannel);
                 return ws.endpoint;
             },
             req_kline: function(symbol, period, callback, from = false, to = false) {
