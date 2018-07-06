@@ -29,9 +29,7 @@ module.exports = (function() {
         reconnect: true,
         verbose: false,
         test: false,
-        log: function() {
-            console.log(Array.prototype.slice.call(arguments));
-        }
+        log: console.log
     };
     let options = default_options;
     let socketHeartbeatInterval;
@@ -164,13 +162,46 @@ module.exports = (function() {
     const _handleSocketHeartbeat = function() {
         this.isAlive = true;
     };
-    const subscribe = function(endpoint, callback, reconnect = false, opened_callback = false) {
+
+    const request_once = function(params, callback) {
+        if (!params || !params.req) throw Error("Wrong params format: " + params);
+        if (options.verbose) options.log("Request once to " + params.req);
+        params.id = `id${channel_idx++}`;
+        const ws = new WebSocket(`${stream}${getServer()}/ws`);
+        ws.endpoint = stringHash(JSON.stringify(params));
+        ws.params = params;
+        ws.isAlive = false;
+        ws.on("open", _handleSocketOpen.bind(ws, reqChannel));
+        ws.on("pong", _handleSocketHeartbeat);
+        ws.on("error", _handleSocketError);
+        ws.on("close", _handleSocketClose);
+        ws.on("message", function(data) {
+            try {
+                let json = JSON.parse(pako.inflate(data, { to: "string" }));
+                if (json.hasOwnProperty("ping")) {
+                    ws.send(JSON.stringify({ pong: json.ping }));
+                    return;
+                }
+                callback(json);
+                ws.close();
+            } catch (error) {
+                options.log("Parse error: " + error.message);
+            }
+        });
+        return ws;
+    };
+    const reqChannel = function(endpoint) {
+        const ws = subscriptions[endpoint];
+        ws.send(JSON.stringify(ws.params));
+    };
+
+    const subscribe = function(endpoint, callback, reconnect = false) {
         if (options.verbose) options.log("Subscribed to " + endpoint);
         const ws = new WebSocket(`${stream}${getServer()}/ws`);
         ws.reconnect = options.reconnect;
         ws.endpoint = endpoint;
         ws.isAlive = false;
-        ws.on("open", _handleSocketOpen.bind(ws, opened_callback));
+        ws.on("open", _handleSocketOpen.bind(ws, addChannel));
         ws.on("pong", _handleSocketHeartbeat);
         ws.on("error", _handleSocketError);
         ws.on("close", _handleSocketClose.bind(ws, reconnect));
@@ -188,7 +219,7 @@ module.exports = (function() {
         });
         return ws;
     };
-    const subscribeCombined = function(streams, callback, reconnect = false, opened_callback = false) {
+    const subscribeCombined = function(streams, callback, reconnect = false) {
         const queryParams = streams.join("/");
         const ws = new WebSocket(`${stream}${getServer()}/ws`);
         ws.reconnect = options.reconnect;
@@ -196,7 +227,7 @@ module.exports = (function() {
         ws.streams = streams;
         ws.isAlive = false;
         if (options.verbose) options.log("CombinedStream: Subscribed to [" + ws.endpoint + "] " + queryParams);
-        ws.on("open", _handleSocketOpen.bind(ws, opened_callback));
+        ws.on("open", _handleSocketOpen.bind(ws, addChannel));
         ws.on("pong", _handleSocketHeartbeat);
         ws.on("error", _handleSocketError);
         ws.on("close", _handleSocketClose.bind(ws, reconnect));
@@ -233,7 +264,7 @@ module.exports = (function() {
     };
     ////////////////////////////
     return {
-        candlesticks: function(symbol, type, callback, options = {}) {
+        kline: function(symbol, type, callback, options = {}) {
             let params = Object.assign({ symbol, period: type, size: 150 }, options);
             params.size = Math.max(Math.min(params.size, 2000), 1);
 
@@ -269,7 +300,11 @@ module.exports = (function() {
             signedRequest("/v1/account/accounts", false, callback);
         },
         balance: function(account_id, callback) {
-            signedRequest(`/v1/account/accounts/${account_id}/balance`, false, callback);
+            signedRequest(
+                `/v1/${options.hadax ? "hadax/" : ""}account/accounts/${account_id}/balance`,
+                false,
+                callback
+            );
         },
         symbols: function(callback) {
             publicRequest(`/v1/${options.hadax ? "hadax/" : ""}common/symbols`, false, callback);
@@ -418,40 +453,72 @@ module.exports = (function() {
             subscriptions: function() {
                 return subscriptions;
             },
-            candlesticks: function(symbols, interval, callback) {
+            sub_kline: function(symbols, interval, callback) {
                 let reconnect = function() {
-                    if (options.reconnect) candlesticks(symbols, interval, callback);
+                    if (options.reconnect) sub_kline(symbols, interval, callback);
                 };
-                let subscription = undefined;
+                let ws;
                 if (Array.isArray(symbols)) {
-                    if (!isArrayUnique(symbols)) throw Error('"symbols" cannot contain duplicate elements.');
+                    if (!isArrayUnique(symbols)) throw Error("symbols contain duplicate elements.");
                     let streams = symbols.map(function(symbol) {
                         return `market.${symbol}.kline.${interval}`;
                     });
-                    subscription = subscribeCombined(streams, callback, reconnect, addChannel);
+                    ws = subscribeCombined(streams, callback, reconnect);
                 } else {
                     let symbol = symbols.toLowerCase();
-                    subscription = subscribe(`market.${symbol}.kline.${interval}`, callback, reconnect, addChannel);
+                    ws = subscribe(`market.${symbol}.kline.${interval}`, callback, reconnect);
                 }
-                return subscription.endpoint;
+                return ws.endpoint;
             },
-            depth: function(symbols, callback, type = "step0") {
+            sub_depth: function(symbols, callback, type = "step0") {
                 let reconnect = function() {
-                    if (options.reconnect) depth(symbols, callback, type);
+                    if (options.reconnect) sub_depth(symbols, callback, type);
                 };
-                let subscription = undefined;
+                let ws;
                 if (Array.isArray(symbols)) {
-                    if (!isArrayUnique(symbols))
-                        throw Error('candlesticks: "symbols" cannot contain duplicate elements.');
+                    if (!isArrayUnique(symbols)) throw Error("symbols contain duplicate elements.");
                     let streams = symbols.map(function(symbol) {
                         return `market.${symbol}.depth.${type}`;
                     });
-                    subscription = subscribeCombined(streams, callback, reconnect, addChannel);
+                    ws = subscribeCombined(streams, callback, reconnect);
                 } else {
                     let symbol = symbols.toLowerCase();
-                    subscription = subscribe(`market.${symbol}.depth.${type}`, callback, reconnect, addChannel);
+                    ws = subscribe(`market.${symbol}.depth.${type}`, callback, reconnect);
                 }
-                return subscription.endpoint;
+                return ws.endpoint;
+            },
+            sub_trade: function(symbol, callback) {
+                let reconnect = function() {
+                    if (options.reconnect) sub_trade(symbol, callback);
+                };
+                let ws = subscribe(`market.${symbol}.trade.detail`, callback, reconnect);
+                return ws.endpoint;
+            },
+            req_kline: function(symbol, period, callback, from = false, to = false) {
+                from = Math.max(Math.min(from, 2524579200), 1501171200);
+                to = Math.max(Math.min(to, 2524579200), 1501171200);
+                if (from && to && from >= to) throw Error(`from ${from} >= to ${to}`);
+                let params = { req: `market.${symbol.toLowerCase()}.kline.${period}` };
+                if (from) params.from = from;
+                if (to) params.to = to;
+
+                let ws = request_once(params, callback);
+                return ws.endpoint;
+            },
+            req_depth: function(symbol, callback, type = "step0") {
+                let params = { req: `market.${symbol.toLowerCase()}.depth.${type}` };
+                let ws = request_once(params, callback);
+                return ws.endpoint;
+            },
+            req_trade: function(symbol, callback) {
+                let params = { req: `market.${symbol.toLowerCase()}.trade.detail` };
+                let ws = request_once(params, callback);
+                return ws.endpoint;
+            },
+            req_detail: function(symbol, callback) {
+                let params = { req: `market.${symbol.toLowerCase()}.detail` };
+                let ws = request_once(params, callback);
+                return ws.endpoint;
             }
         }
     };
